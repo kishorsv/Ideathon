@@ -9,6 +9,8 @@
 [![TailwindCSS](https://img.shields.io/badge/Tailwind-CSS%204.x-38B2AC?logo=tailwind-css)](https://tailwindcss.com/)
 
 ---
+🌐 Live Demo: https://ideathon-2crt.vercel.app/
+
 
 ## 🌟 Overview
 
