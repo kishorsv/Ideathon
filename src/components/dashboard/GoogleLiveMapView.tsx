@@ -18,11 +18,14 @@ import {
   Key, 
   ExternalLink, 
   ShieldAlert, 
-  Info 
+  Info,
+  Clock,
+  ShieldCheck
 } from 'lucide-react';
 import { useEmergencyData } from '../../context/EmergencyDataContext';
 import { useTheme } from '../../context/ThemeContext';
 import { loadGoogleMaps, getGoogleMapsApiKey, setCustomGoogleMapsApiKey } from '../../services/googleMapsService';
+import { calculateHaversineKm } from '../../services/routingService';
 import { Hospital, Ambulance, Incident } from '../../types';
 
 export const GoogleLiveMapView: React.FC = () => {
@@ -48,6 +51,9 @@ export const GoogleLiveMapView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [isLocatingUser, setIsLocatingUser] = useState(false);
+
+  // Selected Hospital for Sidebar Detail Panel
+  const [selectedHospitalForDetails, setSelectedHospitalForDetails] = useState<Hospital | null>(null);
 
   // Mysuru Central Coordinates (Near KR Hospital & Palace)
   const MYSURU_CENTER = { lat: 12.3080, lng: 76.6480 };
@@ -146,7 +152,7 @@ export const GoogleLiveMapView: React.FC = () => {
         if (mapInstanceRef.current && window.google) {
           const g = window.google;
           mapInstanceRef.current.setCenter(userPos);
-          mapInstanceRef.current.setZoom(15);
+          mapInstanceRef.current.setZoom(14);
 
           if (userLocationMarkerRef.current) {
             userLocationMarkerRef.current.setPosition(userPos);
@@ -189,6 +195,10 @@ export const GoogleLiveMapView: React.FC = () => {
     // 1. Hospital Markers
     if (showHospitals) {
       hospitals.forEach((hosp) => {
+        const distanceKm = userLocation 
+          ? calculateHaversineKm(userLocation.lat, userLocation.lng, hosp.lat, hosp.lng).toFixed(1)
+          : null;
+
         const marker = new g.maps.Marker({
           position: { lat: hosp.lat, lng: hosp.lng },
           map,
@@ -205,11 +215,17 @@ export const GoogleLiveMapView: React.FC = () => {
         });
 
         marker.addListener('click', () => {
+          setSelectedHospitalForDetails(hosp);
           if (!infoWindow) return;
           const content = `
             <div style="color: #071321; font-family: system-ui, sans-serif; padding: 4px; max-width: 260px;">
-              <div style="font-weight: 800; font-size: 14px; margin-bottom: 2px;">${hosp.name}</div>
-              <div style="color: #4b5563; font-size: 11px; margin-bottom: 8px;">📍 ${hosp.area}, Mysuru</div>
+              <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 2px;">
+                <div style="font-weight: 800; font-size: 14px;">${hosp.name}</div>
+                <span style="background: #e0f2fe; color: #0369a1; font-size: 9px; font-weight: bold; padding: 2px 4px; border-radius: 4px;">VERIFIED</span>
+              </div>
+              <div style="color: #4b5563; font-size: 11px; margin-bottom: 6px;">
+                📍 ${hosp.area}, Mysuru ${distanceKm ? `&bull; <strong style="color: #0284c7;">${distanceKm} km away</strong>` : ''}
+              </div>
               
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 11px; margin-bottom: 8px; background: #f3f4f6; padding: 6px; border-radius: 8px;">
                 <div>ICU Free: <strong style="color: #15803d;">${hosp.icuBedsAvailable}</strong></div>
@@ -219,7 +235,7 @@ export const GoogleLiveMapView: React.FC = () => {
               </div>
 
               <div style="font-size: 11px; margin-bottom: 8px;">
-                📞 ER: <a href="tel:${hosp.emergencyPhone}" style="color: #0284c7; font-weight: bold; text-decoration: none;">${hosp.emergencyPhone}</a>
+                📞 ER Helpline: <a href="tel:${hosp.emergencyPhone}" style="color: #0284c7; font-weight: bold; text-decoration: none;">${hosp.emergencyPhone}</a>
               </div>
 
               <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(hosp.name + ', Mysuru')}" target="_blank" style="display: block; text-align: center; background: #168BCE; color: white; padding: 6px; border-radius: 6px; font-size: 11px; font-weight: bold; text-decoration: none;">
@@ -235,7 +251,7 @@ export const GoogleLiveMapView: React.FC = () => {
       });
     }
 
-    // 2. Ambulance Markers (Real/Simulated GPS)
+    // 2. Ambulance Markers (Real Telemetry / Available Base Stations)
     if (showAmbulances) {
       ambulances.forEach((amb) => {
         const isBusy = amb.status === 'EN_ROUTE' || amb.status === 'TRANSPORTING';
@@ -252,7 +268,7 @@ export const GoogleLiveMapView: React.FC = () => {
             fillOpacity: 1,
             strokeColor: '#FFFFFF',
             strokeWeight: 2,
-            rotation: 45,
+            rotation: amb.heading || 45,
           },
         });
 
@@ -264,6 +280,7 @@ export const GoogleLiveMapView: React.FC = () => {
               <div style="color: #4b5563; font-size: 11px; margin-bottom: 6px;">108 Unit &bull; ${amb.vehicleType}</div>
               <div style="font-size: 11px; margin-bottom: 4px;">Status: <strong style="color: ${color};">${amb.status}</strong></div>
               <div style="font-size: 11px; margin-bottom: 4px;">Driver: <strong>${amb.driverName}</strong></div>
+              <div style="font-size: 11px; margin-bottom: 4px;">Base: <strong>${amb.baseStation}</strong></div>
               <div style="font-size: 11px;">Speed: <strong>${amb.speedKmH} km/h</strong></div>
             </div>
           `;
@@ -311,7 +328,7 @@ export const GoogleLiveMapView: React.FC = () => {
         markersRef.current[`inc-${inc.id}`] = marker;
       });
     }
-  }, [mapLoaded, showHospitals, showAmbulances, showIncidents, hospitals, ambulances, incidents, setSelectedIncidentId]);
+  }, [mapLoaded, showHospitals, showAmbulances, showIncidents, hospitals, ambulances, incidents, userLocation, setSelectedIncidentId]);
 
   // Handle Search
   const handleSearch = (e: React.FormEvent) => {
@@ -326,6 +343,7 @@ export const GoogleLiveMapView: React.FC = () => {
     if (matchedHosp) {
       mapInstanceRef.current.setCenter({ lat: matchedHosp.lat, lng: matchedHosp.lng });
       mapInstanceRef.current.setZoom(15);
+      setSelectedHospitalForDetails(matchedHosp);
       const marker = markersRef.current[`hosp-${matchedHosp.id}`];
       if (marker && infoWindowRef.current) {
         g.maps.event.trigger(marker, 'click');
@@ -452,66 +470,164 @@ export const GoogleLiveMapView: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Map Canvas */}
-      <div className="relative w-full h-[600px] rounded-3xl overflow-hidden border border-slate-800 dark:border-slate-800 light:border-slate-200 shadow-2xl bg-[#050C16]">
-        {/* Google Maps Container */}
-        <div ref={mapContainerRef} className="w-full h-full min-h-[600px]" />
+      {/* Main Map Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Main Map Canvas (Occupies major screen area) */}
+        <div className={selectedHospitalForDetails ? "lg:col-span-8" : "lg:col-span-12"}>
+          <div className="relative w-full h-[620px] rounded-3xl overflow-hidden border border-slate-800 dark:border-slate-800 light:border-slate-200 shadow-2xl bg-[#050C16]">
+            {/* Google Maps Container */}
+            <div ref={mapContainerRef} className="w-full h-full min-h-[620px]" />
 
-        {/* API Key Missing Banner with Direct Input */}
-        {loadingError === 'NO_API_KEY' && (
-          <div className="absolute inset-0 bg-[#071321]/95 flex items-center justify-center p-6 text-center z-20">
-            <div className="max-w-md space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-[#168BCE]/20 text-[#46C5F5] flex items-center justify-center mx-auto border border-[#168BCE]/40">
-                <Key className="w-7 h-7" />
+            {/* API Key Missing Banner with Direct Input */}
+            {loadingError === 'NO_API_KEY' && (
+              <div className="absolute inset-0 bg-[#071321]/95 flex items-center justify-center p-6 text-center z-20">
+                <div className="max-w-md space-y-4">
+                  <div className="w-14 h-14 rounded-2xl bg-[#168BCE]/20 text-[#46C5F5] flex items-center justify-center mx-auto border border-[#168BCE]/40">
+                    <Key className="w-7 h-7" />
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Google Maps API Configuration</h3>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      To load the official Google Maps JavaScript API with streets, satellite, and terrain imagery for Mysuru, configure <code className="text-[#46C5F5] font-mono font-bold">VITE_GOOGLE_MAPS_API_KEY</code> in your environment or enter it below.
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-[#050C16] border border-slate-800 text-left text-xs space-y-2">
+                    <p className="font-semibold text-slate-300">Quick Configuration Checklist:</p>
+                    <ul className="list-disc list-inside text-slate-400 space-y-1 text-[11px]">
+                      <li>Enable <strong>Maps JavaScript API</strong> and <strong>Places API</strong> in Google Cloud Console.</li>
+                      <li>Configure billing and set HTTP referrer restrictions.</li>
+                      <li>Set <code className="text-[#46C5F5]">VITE_GOOGLE_MAPS_API_KEY=your_key</code> in <code className="text-white">.env</code></li>
+                    </ul>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="text"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="Paste Google Maps API Key here..."
+                      className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#050C16] border border-slate-700 text-xs text-white focus:outline-none focus:border-[#168BCE]"
+                    />
+                    <button
+                      onClick={handleSaveApiKey}
+                      className="px-4 py-2.5 rounded-xl bg-[#168BCE] hover:bg-[#1277b2] text-white text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      Apply Key
+                    </button>
+                  </div>
+                </div>
               </div>
+            )}
 
+            {/* General Error Banner */}
+            {loadingError && loadingError !== 'NO_API_KEY' && (
+              <div className="absolute top-4 left-4 right-4 z-20 p-4 rounded-2xl bg-rose-950/90 border border-rose-500 text-xs text-rose-200 flex items-center justify-between shadow-2xl backdrop-blur-md">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+                  <span>Google Maps Error: {loadingError}</span>
+                </div>
+                <button
+                  onClick={() => initMap()}
+                  className="px-3 py-1 rounded-xl bg-rose-800 hover:bg-rose-700 text-white font-semibold cursor-pointer transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Selected Hospital Detailed Information Panel (Section 5) */}
+        {selectedHospitalForDetails && (
+          <div className="lg:col-span-4 p-5 rounded-3xl bg-[#071321]/95 border border-[#168BCE]/40 shadow-2xl space-y-4 text-xs">
+            <div className="flex items-start justify-between">
               <div>
-                <h3 className="text-lg font-bold text-white">Google Maps API Configuration</h3>
-                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  To load the official Google Maps JavaScript API with streets, satellite, and terrain imagery for Mysuru, configure <code className="text-[#46C5F5] font-mono font-bold">VITE_GOOGLE_MAPS_API_KEY</code> in your environment or enter it below.
+                <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-blue-950 text-[#46C5F5] border border-cyan-800/60 font-mono text-[10px] font-bold mb-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                  <span>VERIFIED FACILITY</span>
+                </div>
+                <h3 className="text-base font-bold text-white">{selectedHospitalForDetails.name}</h3>
+                <p className="text-slate-400 text-[11px] mt-0.5 flex items-center space-x-1">
+                  <MapPin className="w-3.5 h-3.5 text-[#168BCE]" />
+                  <span>{selectedHospitalForDetails.area}, Mysuru</span>
                 </p>
               </div>
 
-              <div className="p-3.5 rounded-2xl bg-[#050C16] border border-slate-800 text-left text-xs space-y-2">
-                <p className="font-semibold text-slate-300">Quick Configuration:</p>
-                <ol className="list-decimal list-inside text-slate-400 space-y-1">
-                  <li>Set <code className="text-[#46C5F5]">VITE_GOOGLE_MAPS_API_KEY=your_key</code> in <code className="text-white">.env</code></li>
-                  <li>Or enter your Google Maps API key below for immediate live testing:</li>
-                </ol>
+              <button
+                onClick={() => setSelectedHospitalForDetails(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg bg-slate-800/60 cursor-pointer"
+                title="Close Panel"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Capacity Metrics */}
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="p-3 rounded-xl bg-[#050C16] border border-slate-800">
+                <p className="text-[10px] uppercase font-mono text-slate-400">Available ICU</p>
+                <p className="text-xl font-bold text-emerald-400 font-mono mt-0.5">
+                  {selectedHospitalForDetails.icuBedsAvailable}
+                </p>
+                <span className="text-[9px] text-slate-500 font-mono">of {selectedHospitalForDetails.totalIcuBeds} total</span>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <input
-                  type="text"
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder="Paste Google Maps API Key here..."
-                  className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#050C16] border border-slate-700 text-xs text-white focus:outline-none focus:border-[#168BCE]"
-                />
-                <button
-                  onClick={handleSaveApiKey}
-                  className="px-4 py-2.5 rounded-xl bg-[#168BCE] hover:bg-[#1277b2] text-white text-xs font-bold transition-colors cursor-pointer"
-                >
-                  Apply Key
-                </button>
+              <div className="p-3 rounded-xl bg-[#050C16] border border-slate-800">
+                <p className="text-[10px] uppercase font-mono text-slate-400">Ventilators</p>
+                <p className="text-xl font-bold text-cyan-400 font-mono mt-0.5">
+                  {selectedHospitalForDetails.ventilatorsAvailable}
+                </p>
+                <span className="text-[9px] text-slate-500 font-mono">of {selectedHospitalForDetails.totalVentilators} total</span>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* General Error Banner */}
-        {loadingError && loadingError !== 'NO_API_KEY' && (
-          <div className="absolute top-4 left-4 right-4 z-20 p-4 rounded-2xl bg-rose-950/90 border border-rose-500 text-xs text-rose-200 flex items-center justify-between shadow-2xl backdrop-blur-md">
-            <div className="flex items-center space-x-2">
-              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
-              <span>Google Maps Error: {loadingError}</span>
+            {/* Specialties Checklist */}
+            <div className="space-y-1.5 pt-1">
+              <p className="font-bold text-slate-300">Specialized Emergency Services:</p>
+              <div className="space-y-1 text-[11px]">
+                <div className="flex items-center justify-between p-2 rounded-lg bg-[#050C16] border border-slate-800/80">
+                  <span>Cath Lab (Cardiac)</span>
+                  <strong className={selectedHospitalForDetails.cathLabReady ? "text-emerald-400" : "text-slate-500"}>
+                    {selectedHospitalForDetails.cathLabReady ? "✓ 24/7 Ready" : "Unavailable"}
+                  </strong>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-lg bg-[#050C16] border border-slate-800/80">
+                  <span>Stroke Critical Unit</span>
+                  <strong className={selectedHospitalForDetails.strokeUnitReady ? "text-emerald-400" : "text-slate-500"}>
+                    {selectedHospitalForDetails.strokeUnitReady ? "✓ Certified" : "Unavailable"}
+                  </strong>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-lg bg-[#050C16] border border-slate-800/80">
+                  <span>Trauma Surgeons on Duty</span>
+                  <strong className="text-cyan-400">
+                    {selectedHospitalForDetails.traumaSurgeonsOnDuty} Active
+                  </strong>
+                </div>
+              </div>
             </div>
-            <button
-              onClick={() => initMap()}
-              className="px-3 py-1 rounded-xl bg-rose-800 hover:bg-rose-700 text-white font-semibold cursor-pointer transition-colors"
-            >
-              Retry
-            </button>
+
+            {/* Actions */}
+            <div className="pt-2 flex flex-col gap-2">
+              <a
+                href={`tel:${selectedHospitalForDetails.emergencyPhone}`}
+                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center space-x-2 shadow-md transition-colors"
+              >
+                <Phone className="w-3.5 h-3.5" />
+                <span>Call ER: {selectedHospitalForDetails.emergencyPhone}</span>
+              </a>
+
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(selectedHospitalForDetails.name + ', Mysuru')}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-2.5 rounded-xl bg-[#168BCE] hover:bg-[#1277b2] text-white font-bold text-xs flex items-center justify-center space-x-2 shadow-md transition-colors"
+              >
+                <Navigation className="w-3.5 h-3.5" />
+                <span>Directions on Google Maps</span>
+              </a>
+            </div>
           </div>
         )}
       </div>
